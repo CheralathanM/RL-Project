@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>King of the Hill — SHCBO Engine</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+    <div class="brand">
+        <span class="mark">♛</span>
+        <span class="brand-text">
+            <b>King of the Hill</b>
+            <small>belief-based opponent modelling</small>
+        </span>
+    </div>
+
+    <div class="status">
+        <div class="turnblock">
+            <span class="stat-label">Turn</span>
+            <span class="stat-val" id="turn-val">1</span>
+            <span class="stat-of">/10</span>
+            <div class="horizon" id="horizon" aria-hidden="true"></div>
+        </div>
+
+        <div class="scoreboard">
+            <div class="sc sc-a">
+                <span class="sc-name">You</span>
+                <b id="score-a">0</b>
+            </div>
+            <span class="sc-vs">vs</span>
+            <div class="sc sc-b">
+                <b id="score-b">0</b>
+                <span class="sc-name">SHCBO</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="topbar-actions">
+        <button class="ghost-btn" onclick="toggleTheme()" id="theme-btn" title="Toggle theme">◐</button>
+        <button class="ghost-btn" onclick="toggleRules()">Rules <kbd>?</kbd></button>
+        <button class="ghost-btn" onclick="resetGame()">Restart <kbd>R</kbd></button>
+    </div>
+</header>
+
+<main class="layout">
+
+    <!-- ── Arena ──────────────────────────────────────────────────────── -->
+    <section class="panel arena">
+        <div class="panel-head">
+            <h2>Arena</h2>
+            <div class="head-right">
+                <button class="toggle" id="overlay-toggle" onclick="toggleBeliefOverlay()" aria-pressed="false">
+                    <span class="toggle-dot"></span> Show what the bot believes
+                </button>
+            </div>
+        </div>
+
+        <div class="legend">
+            <span><i class="sw sw-a"></i>You (A)</span>
+            <span><i class="sw sw-b"></i>Bot (B)</span>
+            <span><i class="sw sw-hill"></i>Hill</span>
+            <span><i class="sw sw-path"></i>A* path</span>
+        </div>
+
+        <div class="board-wrap">
+            <div class="board" id="board"></div>
+            <div class="fx-layer" id="fx-layer">
+                <svg class="tracers" id="tracers" aria-hidden="true"></svg>
+                <div class="tok tok-a" id="tok-a">A</div>
+                <div class="tok tok-b" id="tok-b">B</div>
+            </div>
+        </div>
+
+        <!-- Simultaneous-commit reveal -->
+        <div class="reveal" id="reveal" aria-hidden="true">
+            <div class="reveal-side ra">
+                <span class="reveal-who">You</span>
+                <span class="reveal-act" id="reveal-a">—</span>
+            </div>
+            <span class="reveal-vs">simultaneous</span>
+            <div class="reveal-side rb">
+                <span class="reveal-who">SHCBO</span>
+                <span class="reveal-act" id="reveal-b">—</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="action-row" role="group" aria-label="Choose an action">
+                <button class="action-btn" data-action="MOVE" onclick="setAction('MOVE')" aria-pressed="true">
+                    <span class="ab-key">1</span>
+                    <span class="ab-name">Move</span>
+                    <span class="ab-hint">one step</span>
+                </button>
+                <button class="action-btn shoot" data-action="SHOOT" onclick="setAction('SHOOT')" aria-pressed="false">
+                    <span class="ab-key">2</span>
+                    <span class="ab-name">Shoot</span>
+                    <span class="ab-hint">any cell</span>
+                </button>
+                <button class="action-btn hold" data-action="HOLD" onclick="setAction('HOLD')" aria-pressed="false">
+                    <span class="ab-key">3</span>
+                    <span class="ab-name">Hold</span>
+                    <span class="ab-hint">blocks shots</span>
+                </button>
+            </div>
+
+            <p class="prompt" id="prompt"></p>
+
+            <button class="confirm" id="btn-confirm" onclick="executeTurn()" disabled>
+                <span>Confirm turn</span> <kbd>Enter</kbd>
+            </button>
+        </div>
+
+        <div class="cycle-note">
+            <span class="cyc"><b>Move</b><i>▸</i><b>Hold</b></span>
+            <span class="cyc"><b>Shoot</b><i>▸</i><b>Move</b></span>
+            <span class="cyc"><b>Hold</b><i>▸</i><b>Shoot</b></span>
+            <em>cyclic dominance</em>
+        </div>
+    </section>
+
+    <!-- ── Inspector ──────────────────────────────────────────────────── -->
+    <aside class="inspector">
+        <div class="inspector-head">
+            <h2>Engine inspector</h2>
+            <p>Live trace of the decision loop. The engine never reads your coordinates — everything below is inferred from public observations.</p>
+        </div>
+
+        <!-- Decision -->
+        <section class="card decision-card">
+            <div class="card-head">
+                <h3>Action selection</h3>
+                <span class="eq-tag">softmax</span>
+            </div>
+            <div class="temp-line" id="temp-val">—</div>
+            <div class="decision-table">
+                <div class="dhead"><span>action</span><span>U(a)</span><span>C(a)</span><span>Ũ(a)</span><span>π(a)</span><span></span></div>
+                <div id="decision-rows"></div>
+            </div>
+        </section>
+
+        <!-- Pillar 1 -->
+        <section class="card">
+            <div class="card-head">
+                <span class="pillar p1">1</span>
+                <h3>Bayesian belief grid</h3>
+                <span class="eq-tag">predict / correct</span>
+            </div>
+            <p class="card-sub">Filtered posterior, projected one step forward — where you are likely to be when this turn resolves.</p>
+            <div class="belief-wrap">
+                <div class="belief" id="belief"></div>
+                <div class="belief-side">
+                    <span class="gate-tag shut" id="gate">SHOOT GATED</span>
+                    <p class="mini" id="gate-detail"></p>
+                    <p class="mini muted" id="last-obs"></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pillar 2 -->
+        <section class="card">
+            <div class="card-head">
+                <span class="pillar p2">2</span>
+                <h3>Score-horizon pressure</h3>
+                <span class="eq-tag">α</span>
+            </div>
+            <div class="alpha-row">
+                <div class="alpha-track"><div class="alpha-fill" id="alpha-fill"></div></div>
+                <span class="alpha-val" id="alpha-val">0.000</span>
+                <span class="alpha-tag" id="alpha-tag" data-level="lo">PATIENT</span>
+            </div>
+            <div class="formula">
+                <span class="fx-var">α</span><span class="fx-op">=</span>
+                <span class="fx-clamp">clamp</span><span class="fx-paren">(</span>
+                <span class="fx-frac">
+                    <span class="fx-num" id="alpha-num">(0) + 1/10·1</span>
+                    <span class="fx-den" id="alpha-den">10.5</span>
+                </span>
+                <span class="fx-sub">, 0, 1</span><span class="fx-paren">)</span>
+            </div>
+            <div class="chart-block">
+                <div class="chart-title">α trajectory <span>per turn</span></div>
+                <svg class="chart" id="alpha-chart" viewBox="0 0 260 84" preserveAspectRatio="none"></svg>
+            </div>
+        </section>
+
+        <!-- Pillar 3 -->
+        <section class="card">
+            <div class="card-head">
+                <span class="pillar p3">3</span>
+                <h3>A* commitment cost</h3>
+                <span class="eq-tag">f = g + h</span>
+            </div>
+            <div class="path-line" id="path-line">Awaiting first turn</div>
+            <div class="path-meta" id="path-meta"></div>
+            <div class="cost-table" id="cost-rows"></div>
+        </section>
+
+        <!-- Pillar 4 -->
+        <section class="card">
+            <div class="card-head">
+                <span class="pillar p4">4</span>
+                <h3>Regime detection</h3>
+                <span class="eq-tag">hysteresis</span>
+            </div>
+            <div class="fsm">
+                <div class="fsm-state" data-regime="AGGRESSIVE"><b>Aggressive</b><small>move-heavy</small></div>
+                <div class="fsm-state" data-regime="PREDICTIVE"><b>Predictive</b><small>shoot-heavy</small></div>
+                <div class="fsm-state" data-regime="DEFENSIVE"><b>Defensive</b><small>hold-heavy</small></div>
+            </div>
+            <p class="mini muted" id="regime-reason"></p>
+            <div class="freq-block">
+                <div class="freq-title">Rolling window <span>W = 4</span></div>
+                <div class="window-strip" id="window-strip"></div>
+                <div id="freq-rows"></div>
+                <p class="mini muted">Hysteresis: enter above τ<sub>high</sub> 0.65, leave below τ<sub>low</sub> 0.35.</p>
+            </div>
+        </section>
+
+        <!-- Timeline -->
+        <section class="card">
+            <div class="card-head"><h3>Hill timeline</h3></div>
+            <div class="timeline" id="timeline"></div>
+            <div class="timeline-key">
+                <span><i class="tk tk-a"></i>you</span>
+                <span><i class="tk tk-b"></i>bot</span>
+                <span><i class="tk tk-c"></i>contested</span>
+                <span><i class="tk tk-v"></i>vacant</span>
+            </div>
+        </section>
+
+        <!-- Log -->
+        <section class="card log-card">
+            <div class="card-head"><h3>Match log</h3></div>
+            <div class="log" id="match-log"></div>
+        </section>
+    </aside>
+</main>
+
+<!-- ── Rules ──────────────────────────────────────────────────────────── -->
+<div class="overlay" id="rules-modal">
+    <div class="sheet">
+        <div class="sheet-head">
+            <h2>How to play</h2>
+            <button class="icon-btn" onclick="toggleRules()" aria-label="Close">✕</button>
+        </div>
+        <div class="sheet-body">
+            <section>
+                <h4>Goal</h4>
+                <p>Ten turns. You score <b>+1</b> for each turn you end alone on the hill at (2,2). If you both stand on it, nobody scores. Highest total wins.</p>
+            </section>
+            <section>
+                <h4>Actions</h4>
+                <ul class="rule-list">
+                    <li><b>Move</b> — one orthogonal step. Beats Hold.</li>
+                    <li><b>Shoot</b> — fire at any cell. A hit sends the target back to spawn. Beats Move.</li>
+                    <li><b>Hold</b> — stay put and block one incoming shot. Beats Shoot.</li>
+                </ul>
+                <p>Both sides commit simultaneously, then the turn resolves.</p>
+            </section>
+            <section>
+                <h4>Keyboard</h4>
+                <div class="keys">
+                    <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> action</span>
+                    <span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> aim</span>
+                    <span><kbd>Enter</kbd> confirm</span>
+                    <span><kbd>Esc</kbd> clear</span>
+                    <span><kbd>B</kbd> belief overlay</span>
+                    <span><kbd>R</kbd> restart</span>
+                </div>
+            </section>
+            <section>
+                <h4>What the bot can see</h4>
+                <p>Not your position. Only your action <i>type</i>, who took the hill, and whether its own shot hit, was shielded, or missed. It rebuilds a probability distribution over your location from that — press <b>B</b> to see it drawn on the board.</p>
+            </section>
+        </div>
+        <div class="sheet-foot">
+            <button class="primary" onclick="toggleRules()">Start playing</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Debrief ────────────────────────────────────────────────────────── -->
+<div class="overlay" id="gameover">
+    <div class="debrief">
+        <div class="debrief-head">
+            <div class="result-title" id="go-title">—</div>
+            <div class="result-score"><span id="go-a">0</span><i>–</i><span id="go-b">0</span></div>
+            <div class="result-sub" id="go-sub"></div>
+        </div>
+
+        <div class="debrief-grid">
+            <div class="db-card">
+                <div class="db-label">α trajectory</div>
+                <svg class="chart big" id="go-chart" viewBox="0 0 300 96" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="db-card">
+                <div class="db-label">Bot action mix</div>
+                <div id="go-mix"></div>
+            </div>
+            <div class="db-card">
+                <div class="db-label">Hill control</div>
+                <div class="timeline" id="go-timeline"></div>
+            </div>
+            <div class="db-card">
+                <div class="db-label">Belief accuracy</div>
+                <div class="db-stat"><b id="go-belief">—</b><small>mean probability mass the engine placed on your true cell (0.04 = random guessing)</small></div>
+            </div>
+        </div>
+
+        <button class="primary wide" onclick="resetGame()">Play again <kbd>R</kbd></button>
+    </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

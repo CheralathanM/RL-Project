@@ -1,0 +1,5 @@
+.backup/
+.claude/
+*.tmp
+.DS_Store
+Thumbs.db
