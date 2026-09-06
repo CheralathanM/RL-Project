@@ -40,13 +40,14 @@ const CONFIG = {
     SPAWN_BOT: { r: 4, c: 0 },
 };
 
-// The four blocks immediately surrounding the hill. A player that scores
-// respawns into exactly one of these.
+// The four blocks diagonally surrounding the hill at C3 — B2, B4, D2, D4.
+// A player that scores respawns into exactly one of these.
+// Labels map as file = 'A' + c, rank = r + 1, so C3 is { r: 2, c: 2 }.
 const RESPAWN_CELLS = [
-    { r: 1, c: 2 },
-    { r: 3, c: 2 },
-    { r: 2, c: 1 },
-    { r: 2, c: 3 },
+    { r: 1, c: 1 },   // B2
+    { r: 3, c: 1 },   // B4
+    { r: 1, c: 3 },   // D2
+    { r: 3, c: 3 },   // D4
 ];
 
 const ACTIONS = ['MOVE', 'SHOOT', 'HOLD'];

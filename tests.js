@@ -158,11 +158,12 @@ describe('Hill and scoring', () => {
 /* ── Respawn rule ──────────────────────────────────────────────────────── */
 
 describe('Respawn', () => {
-    it('defines exactly the four blocks around the hill', () => {
+    it('defines exactly B2, B4, D2 and D4 — the diagonals of the hill', () => {
         eq(RESPAWN_CELLS.length, 4);
+        eq(RESPAWN_CELLS.map(cellLabel).sort().join(','), 'B2,B4,D2,D4');
         for (const cell of RESPAWN_CELLS) {
-            eq(Math.abs(cell.r - HILL.r) + Math.abs(cell.c - HILL.c), 1,
-               `${cellLabel(cell)} is adjacent to the hill`);
+            eq(Math.abs(cell.r - HILL.r), 1, `${cellLabel(cell)} is one rank from the hill`);
+            eq(Math.abs(cell.c - HILL.c), 1, `${cellLabel(cell)} is one file from the hill`);
         }
     });
 

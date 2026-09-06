@@ -15,8 +15,8 @@ point does not end the match — play always runs the full 25 rounds, and the hi
 
 Two rules keep the board moving:
 
-- **Respawn on score.** Whoever scores is moved off the hill into one of the four blocks around it
-  (B3, D3, C2, C4), chosen uniformly. A point cannot turn into permanent camping.
+- **Respawn on score.** Whoever scores is moved off the hill into one of the four blocks diagonally
+  around it (B2, B4, D2, D4), chosen uniformly. A point cannot turn into permanent camping.
 - **No consecutive repeat shots.** Neither side may target the same block on two shots in a row. The
   restriction lapses as soon as that side takes a different action, so no block is ever locked out of
   play. It binds the agent exactly as it binds you.
