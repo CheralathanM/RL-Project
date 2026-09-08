@@ -57,12 +57,14 @@ const REGIME_PRIOR = {
     AGGRESSIVE: { MOVE: 0.60, SHOOT: 0.20, HOLD: 0.20 },
     PREDICTIVE: { MOVE: 0.20, SHOOT: 0.60, HOLD: 0.20 },
     DEFENSIVE:  { MOVE: 0.20, SHOOT: 0.20, HOLD: 0.60 },
+    CHAOTIC:    { MOVE: 0.33, SHOOT: 0.17, HOLD: 0.50 },
 };
 
 const REGIME_META = {
     AGGRESSIVE: { label: 'Aggressive', sub: 'move-heavy', trigger: 'MOVE' },
     PREDICTIVE: { label: 'Predictive', sub: 'shoot-heavy', trigger: 'SHOOT' },
     DEFENSIVE:  { label: 'Defensive',  sub: 'hold-heavy',  trigger: 'HOLD' },
+    CHAOTIC:    { label: 'Chaotic',    sub: 'unpredictable', trigger: 'CHAOS' },
 };
 
 /* ── Pure helpers ──────────────────────────────────────────────────────── */
@@ -215,7 +217,12 @@ function createEngine(options) {
     // Hill-attraction transition kernel, exp(-lambda * L1 distance to hill).
     function transitionKernel(from) {
         const candidates = [...neighbors(from.r, from.c), clone(from)];
-        const weights = candidates.map(p => Math.exp(-CONFIG.LAMBDA * manhattan(p, HILL)));
+        let lambda = CONFIG.LAMBDA;
+        if (S.beliefGrid && S.beliefGrid[0]) {
+            const H = gridEntropy(S.beliefGrid);
+            lambda = 0.3 + 0.7 * (1 - H / 4.64);
+        }
+        const weights = candidates.map(p => Math.exp(-lambda * manhattan(p, HILL)));
         const z = weights.reduce((a, b) => a + b, 0);
         return candidates.map((p, i) => ({ cell: p, prob: weights[i] / z }));
     }
@@ -245,7 +252,7 @@ function createEngine(options) {
         // Scoring respawns the scorer into one of four cells around the hill.
         // The event is public but the draw is not, so the posterior collapses
         // to a uniform over exactly those four candidates.
-        if (obs.humanRespawned) return isRespawnCell(cell) ? 1 : 0;
+        if (obs.humanRespawned) return isRespawnCell(cell) ? 1 + (1.0 / (1 + manhattan(cell, S.botPos))) : 0;
 
         let L = 1;
 
@@ -278,10 +285,10 @@ function createEngine(options) {
             let z2 = 0;
             forEachCell((r, c) => { posterior[r][c] = likelihood(r, c, obs); z2 += posterior[r][c]; });
             if (z2 <= 1e-9) return;
-            forEachCell((r, c) => { S.beliefGrid[r][c] = posterior[r][c] / z2; });
+            forEachCell((r, c) => { S.beliefGrid[r][c] = 0.96 * (posterior[r][c] / z2) + 0.04 * (1 / (GRID * GRID)); });
             return;
         }
-        forEachCell((r, c) => { S.beliefGrid[r][c] = posterior[r][c] / z; });
+        forEachCell((r, c) => { S.beliefGrid[r][c] = 0.96 * (posterior[r][c] / z) + 0.04 * (1 / (GRID * GRID)); });
     }
 
     function bayesianUpdate() {
@@ -299,13 +306,15 @@ function createEngine(options) {
     // one-step predictive projection, mixing "stayed put" against the
     // transition kernel in the proportion the detected regime expects them to
     // move.
-    function refreshDecisionBelief() {
+    function refreshDecisionBelief(baseGrid = S.beliefGrid) {
         const pMove = REGIME_PRIOR[S.regime].MOVE;
         const next = zeroGrid();
         forEachCell((r, c) => {
-            const prior = S.beliefGrid[r][c];
+            const prior = baseGrid[r][c];
             if (prior <= 1e-6) return;
+            // stayed put
             next[r][c] += prior * (1 - pMove);
+            // moved
             for (const { cell, prob } of transitionKernel({ r, c })) {
                 next[cell.r][cell.c] += prior * pMove * prob;
             }
@@ -341,11 +350,20 @@ function createEngine(options) {
         const { freq, n } = actionFrequencies();
         if (n < 2) return { regime: S.regime, freq, n, switched: false, reason: 'window not yet filled' };
 
+        let entropyA = 0;
+        ACTIONS.forEach(a => { if (freq[a] > 0) entropyA -= freq[a] * Math.log2(freq[a]); });
+        if (entropyA > 0.9 * Math.log2(3)) {
+            const switched = 'CHAOTIC' !== S.regime;
+            const previous = S.regime;
+            S.regime = 'CHAOTIC';
+            return { regime: 'CHAOTIC', previous, freq, n, switched, reason: `Action entropy indicates chaotic play` };
+        }
+
         const trigger = REGIME_META[S.regime].trigger;
 
         // Hysteresis: hold the incumbent until its own signal decays past
         // tau_low, and only then adopt a challenger that has cleared tau_high.
-        if (freq[trigger] >= CONFIG.TAU_LOW) {
+        if (trigger !== 'CHAOS' && freq[trigger] >= CONFIG.TAU_LOW) {
             return {
                 regime: S.regime, freq, n, switched: false,
                 reason: `incumbent ${trigger} at ${freq[trigger].toFixed(2)} held above τ_low ${CONFIG.TAU_LOW}`,
@@ -415,15 +433,20 @@ function createEngine(options) {
     // Expectation over the belief grid and the regime-conditioned opponent prior.
     function bimatrixUtility(aB, ctx) {
         const prior = REGIME_PRIOR[S.regime];
-        let u = 0;
-        forEachCell((r, c) => {
-            const b = S.decisionBelief[r][c];
-            if (b <= 1e-6) return;
-            let inner = 0;
-            for (const aA of ACTIONS) inner += prior[aA] * payoffBot(aB, aA, { r, c }, ctx);
-            u += b * inner;
-        });
-        return u;
+        let minExpectedU = Infinity;
+        for (const aA of ACTIONS) {
+            if (prior[aA] < 0.05) continue; // ignore highly unlikely actions for minimax
+            let expectedU = 0;
+            forEachCell((r, c) => {
+                const b = S.decisionBelief[r][c];
+                if (b <= 1e-6) return;
+                expectedU += b * payoffBot(aB, aA, { r, c }, ctx);
+            });
+            if (expectedU < minExpectedU) {
+                minExpectedU = expectedU;
+            }
+        }
+        return minExpectedU === Infinity ? 0 : minExpectedU;
     }
 
     function sampleFrom(dist) {
@@ -445,6 +468,9 @@ function createEngine(options) {
         const regimeTrace = detectRegime();
 
         refreshDecisionBelief();
+        if (pressureTrace.horizon > 15) {
+            refreshDecisionBelief(S.decisionBelief);
+        }
 
         // The consecutive-shot restriction applies to the agent too: its own
         // previous target is excluded before the argmax is taken, so the
@@ -473,7 +499,7 @@ function createEngine(options) {
             net[a] = U[a] - C[a];
         }
 
-        const temperature = CONFIG.TAU * (1 - 0.5 * S.alpha);
+        const temperature = CONFIG.TAU * ((CONFIG.T - S.turn + 1) / CONFIG.T) * (1 - 0.5 * S.alpha);
         const policy = softmax(net, temperature);
         const sampled = sampleFrom(policy);
 
